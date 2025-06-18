@@ -1,14 +1,14 @@
 package com.tech;
 
 import com.tech.model.Task;
+import com.tech.model.TaskStatus;
 import com.tech.producer.TaskProducer;
 import com.tech.util.LoggerSetup;
 import com.tech.worker.TaskWorker;
 
-import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.PriorityBlockingQueue;
+import java.util.UUID;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -27,6 +27,12 @@ public class ConcurQueueApp {
         BlockingQueue<Task> taskQueue = new PriorityBlockingQueue<>();
         logger.log(Level.INFO, "Shared Task Queue (PriorityBlockingQueue) initialized.");
 
+        ConcurrentHashMap<UUID, TaskStatus> taskStatuses = new ConcurrentHashMap<>();
+        logger.log(Level.INFO, "Task Status Map (ConcurrentHashMap) initialized.");
+
+        AtomicInteger tasksProcessedCount = new AtomicInteger(0);
+        logger.log(Level.INFO, "Tasks Processed Count (AtomicInteger) initialized.");
+
         System.out.println("------------------------------------------------------------------------------");
 
         logger.log(Level.INFO, "Starting {0} producer threads...", NUMBER_OF_PRODUCERS);
@@ -42,22 +48,24 @@ public class ConcurQueueApp {
             }
 
             TaskProducer producer = new TaskProducer(
-                    producerName, taskQueue, TASKS_PER_PRODUCER, PRODUCER_INTERVAL_MILLIS);
+                    producerName, taskQueue, taskStatuses, TASKS_PER_PRODUCER, PRODUCER_INTERVAL_MILLIS);
             producerThreads[i] = new Thread(producer, producerName);
             producerThreads[i].start();
             logger.log(Level.INFO, "Producer thread {0} started.", producerName);
+
+            System.out.println("------------------------------------------------------------------------------");
         }
-        System.out.println("------------------------------------------------------------------------------");
+
 
         logger.log(Level.INFO, "Setting up Worker Pool with {0} worker threads...", NUMBER_OF_WORKERS);
         ExecutorService workerPool = Executors.newFixedThreadPool(NUMBER_OF_WORKERS);
         for (int i = 0; i < NUMBER_OF_WORKERS; i++) {
-            workerPool.submit(new TaskWorker(taskQueue));
+            workerPool.submit(new TaskWorker(taskQueue, taskStatuses, tasksProcessedCount));
 
         }
         logger.info("Worker Pool threads submitted");
 
-        for (int i = 0; i < NUMBER_OF_WORKERS; i++) {
+        for (int i = 0; i < NUMBER_OF_PRODUCERS; i++) {
             try {
                 producerThreads[i].join();
                 logger.info(String.format("Producer {0} has finished its tasks", producerThreads[i].getName()));
@@ -65,15 +73,25 @@ public class ConcurQueueApp {
                 logger.log(Level.WARNING, "Main thread interrupted while waiting for producer {0} to finish", producerThreads[i].getName());
                 Thread.currentThread().interrupt();
             }
+            System.out.println("------------------------------------------------------------------------------");
         }
         logger.info("All producers have finished their tasks generation.");
 
-        System.out.println("------------------------------------------------------------------------------");
+
 
         logger.info("Waiting for workers to drain the queue. Current queue size: {0}" + taskQueue.size());
         try {
-            while (!taskQueue.isEmpty()) {
+            long lastQueueSize = -1;
+            int stableCount = 0;
+            while (!taskQueue.isEmpty() || stableCount < 3) {
+                int currentQueueSize = taskQueue.size();
                 logger.fine("Queue not empty. waiting ... Current queue size: " + taskQueue.size());
+                if (currentQueueSize == lastQueueSize) {
+                    stableCount++;
+                } else {
+                    stableCount = 0;
+                }
+                lastQueueSize = currentQueueSize;
                 Thread.sleep(2000);
             }
             logger.info("All tasks have been processed. Queue is empty now. Giving workers a chance to finish.");
@@ -82,6 +100,12 @@ public class ConcurQueueApp {
             logger.log(Level.WARNING, "Main thread interrupted while waiting for worker to finish");
             Thread.currentThread().interrupt();
         }
+
+        logger.info("All tasks seem to be processed or queue drained. Final task status summary:");
+        taskStatuses.forEach((uuid, status) ->
+                logger.info(String.format("Task ID: %s, Status: %s", uuid.toString().substring(0, 8), status)));
+        logger.info(String.format("Total tasks processed count (from AtomicInteger): %d. Total tasks submitted: %d.",
+                tasksProcessedCount.get(), (NUMBER_OF_PRODUCERS * TASKS_PER_PRODUCER)));
 
         System.out.println("------------------------------------------------------------------------------");
 

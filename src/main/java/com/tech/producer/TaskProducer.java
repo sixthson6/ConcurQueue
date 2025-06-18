@@ -1,9 +1,12 @@
 package com.tech.producer;
 
 import com.tech.model.Task;
+import com.tech.model.TaskStatus;
 
 import java.util.Random;
+import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -13,11 +16,12 @@ public class TaskProducer implements Runnable {
 
     private final String producerName;
     private final BlockingQueue<Task> taskQueue;
+    private final ConcurrentHashMap<UUID, TaskStatus> taskStatuses;
     private final int numberOfTasksToGenerate;
     private final long generationIntervalMillis;
     private final Random random = new Random();
 
-    public TaskProducer(String producerName, BlockingQueue<Task> taskQueue, int numberOfTasksToGenerate, long generationIntervalMillis) {
+    public TaskProducer(String producerName, BlockingQueue<Task> taskQueue, ConcurrentHashMap<UUID, TaskStatus> taskStatuses, int numberOfTasksToGenerate, long generationIntervalMillis) {
         if (producerName == null || producerName.trim().isEmpty()) {
             throw new IllegalArgumentException("Producer name cannot be null or empty");
         }
@@ -33,6 +37,7 @@ public class TaskProducer implements Runnable {
 
         this.producerName = producerName;
         this.taskQueue = taskQueue;
+        this.taskStatuses = taskStatuses;
         this.numberOfTasksToGenerate = numberOfTasksToGenerate;
         this.generationIntervalMillis = generationIntervalMillis;
 
@@ -63,6 +68,7 @@ public class TaskProducer implements Runnable {
                 Task task = new Task(taskName, priority, payload);
 
                 taskQueue.put(task);
+                taskStatuses.put(task.getId(), TaskStatus.SUBMITTED);
                 logger.info(String.format("Producer '%s' generated task: %s with priority %d", producerName, taskName, priority));
                 Thread.sleep(generationIntervalMillis);
             }
