@@ -43,6 +43,11 @@ public class TaskWorker implements Runnable {
         while (running) {
             try {
                 Task task = (Task) taskQueue.take();
+
+                if (task.isPoisonPill) {
+                    logger.info("Worker " + workerName + " received poison pill. Shutting down.");
+                    break;
+                }
                 taskStatuses.put(task.getId(), TaskStatus.PROCESSING);
                 logger.log(Level.INFO, String.format("Worker %s processing task: %s. Queue size: %d", workerName, task.getName(), taskQueue.size()));
 

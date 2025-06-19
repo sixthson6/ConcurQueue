@@ -5,7 +5,7 @@ import java.util.Objects;
 import java.util.UUID;
 import java.util.logging.Logger;
 
-public class Task implements Comparable<Task>{
+public class Task implements Comparable<Task> {
     private static final Logger logger = Logger.getLogger(Task.class.getName());
 
     private final UUID id;
@@ -13,13 +13,16 @@ public class Task implements Comparable<Task>{
     private final int priority;
     private final Instant createdTimestamp;
     private final String payload;
-
+    public final boolean isPoisonPill;
 
     public Task(String name, int priority, String payload) {
+        this(name, priority, payload, false);
+    }
+    public Task(String name, int priority, String payload, boolean isPoisonPill) {
         if (name == null || name.trim().isEmpty()) {
             throw new IllegalArgumentException("Task name cannot be null or empty");
         }
-        if (priority < 1) {
+        if (priority < 1 && !isPoisonPill) {
             throw new IllegalArgumentException("Priority must be a positive integer");
         }
         if (payload == null || payload.trim().isEmpty()) {
@@ -30,6 +33,13 @@ public class Task implements Comparable<Task>{
         this.priority = priority;
         this.createdTimestamp = Instant.now();
         this.payload = payload;
+        this.isPoisonPill = isPoisonPill;
+
+        logger.fine("Created Task: " + this);
+    }
+
+    public static Task createPoisonPill() {
+        return new Task("POISON_PILL_TASK", Integer.MAX_VALUE, "SIGNAL_TO_STOP", true);
     }
 
     public UUID getId() {
@@ -54,6 +64,12 @@ public class Task implements Comparable<Task>{
 
     @Override
     public int compareTo(Task other) {
+        if (this.isPoisonPill && !other.isPoisonPill) {
+            return 1;
+        }
+        if (!this.isPoisonPill && other.isPoisonPill) {
+            return -1;
+        }
         int priorityComparison = Integer.compare(this.priority, other.priority);
         if(priorityComparison != 0) {
             return priorityComparison;
@@ -80,6 +96,7 @@ public class Task implements Comparable<Task>{
                 ", name='" + name + '\'' +
                 ", priority=" + priority +
                 ", createdTimestamp=" + createdTimestamp +
+                (isPoisonPill ? ", type=POISON_PILL" : "") +
                 '}';
     }
 
