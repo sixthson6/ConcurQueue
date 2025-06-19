@@ -6,6 +6,7 @@ import java.util.UUID;
 import java.util.logging.Logger;
 
 public class Task implements Comparable<Task> {
+
     private static final Logger logger = Logger.getLogger(Task.class.getName());
 
     private final UUID id;
@@ -13,33 +14,40 @@ public class Task implements Comparable<Task> {
     private final int priority;
     private final Instant createdTimestamp;
     private final String payload;
-    public final boolean isPoisonPill;
+    private int retryAttempt;
 
-    public Task(String name, int priority, String payload) {
-        this(name, priority, payload, false);
-    }
-    public Task(String name, int priority, String payload, boolean isPoisonPill) {
+    public static final Task POISON_PILL = new Task("POISON_PILL", Integer.MAX_VALUE, "STOP_SIGNAL", -1);
+
+    private Task(String name, int priority, String payload, int retryAttempt) {
         if (name == null || name.trim().isEmpty()) {
-            throw new IllegalArgumentException("Task name cannot be null or empty");
+            throw new IllegalArgumentException("Task name cannot be null or empty.");
         }
-        if (priority < 1 && !isPoisonPill) {
-            throw new IllegalArgumentException("Priority must be a positive integer");
+        if (priority < 1 && !"POISON_PILL".equals(name)) {
+            throw new IllegalArgumentException("Task priority must be a positive integer.");
         }
-        if (payload == null || payload.trim().isEmpty()) {
-            throw new IllegalArgumentException("Payload cannot be null or empty");
+        if (payload == null) {
+            throw new IllegalArgumentException("Task payload cannot be null.");
         }
+        if (retryAttempt < -1) {
+            throw new IllegalArgumentException("Retry attempt cannot be less than -1.");
+        }
+
         this.id = UUID.randomUUID();
         this.name = name;
         this.priority = priority;
         this.createdTimestamp = Instant.now();
         this.payload = payload;
-        this.isPoisonPill = isPoisonPill;
+        this.retryAttempt = retryAttempt;
 
-        logger.fine("Created Task: " + this);
+        logger.fine("Task created: " + this);
     }
 
-    public static Task createPoisonPill() {
-        return new Task("POISON_PILL_TASK", Integer.MAX_VALUE, "SIGNAL_TO_STOP", true);
+    public Task(String name, int priority, String payload) {
+        this(name, priority, payload, 0);
+    }
+
+    public Task(Task originalTask, int newRetryAttempt) {
+        this(originalTask.getName(), originalTask.getPriority(), originalTask.getPayload(), newRetryAttempt);
     }
 
     public UUID getId() {
@@ -62,16 +70,20 @@ public class Task implements Comparable<Task> {
         return payload;
     }
 
+    public int getRetryAttempt() {
+        return retryAttempt;
+    }
+
     @Override
     public int compareTo(Task other) {
-        if (this.isPoisonPill && !other.isPoisonPill) {
+        if (this == POISON_PILL && other != POISON_PILL) {
             return 1;
         }
-        if (!this.isPoisonPill && other.isPoisonPill) {
+        if (this != POISON_PILL && other == POISON_PILL) {
             return -1;
         }
         int priorityComparison = Integer.compare(this.priority, other.priority);
-        if(priorityComparison != 0) {
+        if (priorityComparison != 0) {
             return priorityComparison;
         }
         return this.createdTimestamp.compareTo(other.createdTimestamp);
@@ -79,25 +91,28 @@ public class Task implements Comparable<Task> {
 
     @Override
     public boolean equals(Object o) {
+        if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
         Task task = (Task) o;
-        return priority == task.priority && Objects.equals(id, task.id) && Objects.equals(name, task.name) && Objects.equals(createdTimestamp, task.createdTimestamp) && Objects.equals(payload, task.payload);
+        return id.equals(task.id);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(id, name, priority, createdTimestamp, payload);
+        return Objects.hash(id);
     }
 
     @Override
     public String toString() {
+        if (this == POISON_PILL) {
+            return "Task{type=POISON_PILL}";
+        }
         return "Task{" +
                 "id=" + id.toString().substring(0, 8) +
                 ", name='" + name + '\'' +
                 ", priority=" + priority +
-                ", createdTimestamp=" + createdTimestamp +
-                (isPoisonPill ? ", type=POISON_PILL" : "") +
+                ", created=" + createdTimestamp +
+                ", retries=" + retryAttempt +
                 '}';
     }
-
 }
