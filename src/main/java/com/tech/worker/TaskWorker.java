@@ -2,16 +2,16 @@ package com.tech.worker;
 
 import com.tech.model.Task;
 import com.tech.model.TaskStatus;
+import com.tech.model.TaskStatusEntry;
 
+import java.time.Instant;
+import java.util.Random;
 import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-import java.util.Random;
-import com.tech.model.TaskStatusEntry;
-
 
 public class TaskWorker implements Runnable {
 
@@ -49,6 +49,7 @@ public class TaskWorker implements Runnable {
 
         while (running) {
             Task task = null;
+            TaskStatusEntry statusEntry = null;
             try {
                 task = taskQueue.take();
 
@@ -58,7 +59,7 @@ public class TaskWorker implements Runnable {
                     break;
                 }
 
-                TaskStatusEntry statusEntry = taskStatuses.get(task.getId());
+                statusEntry = taskStatuses.get(task.getId());
                 if (statusEntry == null) {
                     statusEntry = new TaskStatusEntry(task.getId(), TaskStatus.PROCESSING, task.getRetryAttempt());
                     taskStatuses.put(task.getId(), statusEntry);
@@ -66,6 +67,8 @@ public class TaskWorker implements Runnable {
                 } else {
                     statusEntry.updateStatus(TaskStatus.PROCESSING);
                 }
+
+                statusEntry.setProcessingStartTime(Instant.now());
 
                 logger.log(Level.INFO, String.format("Worker '%s' started processing task: %s (Retry: %d). Status: %s. Queue size: %d",
                         workerName, task.toString(), task.getRetryAttempt(), statusEntry.getStatus(), taskQueue.size()));
@@ -80,6 +83,8 @@ public class TaskWorker implements Runnable {
                 }
 
                 Thread.sleep(processingDelay);
+
+                statusEntry.setProcessingEndTime(Instant.now());
 
                 if (random.nextDouble() < 0.15 && task.getRetryAttempt() < MAX_RETRIES) {
                     statusEntry.incrementRetryAttempts();
@@ -108,8 +113,9 @@ public class TaskWorker implements Runnable {
                 logger.log(Level.SEVERE, String.format("An unexpected error occurred in TaskWorker '%s' processing task: %s",
                         workerName, (task != null ? task.toString() : "N/A")), e);
                 if (task != null) {
-                    TaskStatusEntry statusEntry = taskStatuses.get(task.getId());
+                    statusEntry = taskStatuses.get(task.getId());
                     if (statusEntry != null) {
+                        statusEntry.setProcessingEndTime(Instant.now());
                         statusEntry.updateStatus(TaskStatus.FAILED_PERMANENTLY);
                     } else {
                         taskStatuses.put(task.getId(), new TaskStatusEntry(task.getId(), TaskStatus.FAILED_PERMANENTLY, task.getRetryAttempt()));

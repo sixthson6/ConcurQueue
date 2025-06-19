@@ -10,7 +10,7 @@ import com.tech.producer.TaskProducer;
 import com.tech.util.LoggerSetup;
 import com.tech.worker.TaskWorker;
 
-
+import java.time.Instant;
 import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
@@ -37,6 +37,7 @@ public class ConcurQueueApp {
 
     public static void main(String[] args) {
         LoggerSetup.setup();
+        Instant applicationStartTime = Instant.now();
         logger.info("ConcurQueue Application starting...");
         System.out.println("______________________________________________________________________________");
 
@@ -77,7 +78,7 @@ public class ConcurQueueApp {
         logger.info("Worker pool threads submitted.");
         System.out.println("______________________________________________________________________________");
 
-        SystemMonitor monitor = new SystemMonitor(taskQueue, taskStatuses, workerPool);
+        SystemMonitor monitor = new SystemMonitor(taskQueue, taskStatuses, workerPool, applicationStartTime);
         Thread monitorThread = new Thread(monitor, "SystemMonitorThread");
         monitorThread.setDaemon(true);
         monitorThread.start();
@@ -175,4 +176,3 @@ public class ConcurQueueApp {
         System.out.println("______________________________________________________________________________");
     }
 }
-
