@@ -4,5 +4,6 @@ public enum TaskStatus {
     SUBMITTED,
     PROCESSING,
     COMPLETED,
-    FAILED
+    FAILED_RETRY,
+    FAILED_PERMANENTLY,
 }
