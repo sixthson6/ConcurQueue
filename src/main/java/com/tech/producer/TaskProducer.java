@@ -9,6 +9,7 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import com.tech.model.TaskStatusEntry;
 
 public class TaskProducer implements Runnable {
 
@@ -16,23 +17,28 @@ public class TaskProducer implements Runnable {
 
     private final String producerName;
     private final BlockingQueue<Task> taskQueue;
-    private final ConcurrentHashMap<UUID, TaskStatus> taskStatuses;
+    private final ConcurrentHashMap<UUID, TaskStatusEntry> taskStatuses;
     private final int numberOfTasksToGenerate;
     private final long generationIntervalMillis;
     private final Random random = new Random();
 
-    public TaskProducer(String producerName, BlockingQueue<Task> taskQueue, ConcurrentHashMap<UUID, TaskStatus> taskStatuses, int numberOfTasksToGenerate, long generationIntervalMillis) {
+    public TaskProducer(String producerName, BlockingQueue<Task> taskQueue,
+                        ConcurrentHashMap<UUID, TaskStatusEntry> taskStatuses,
+                        int numberOfTasksToGenerate, long generationIntervalMillis) {
         if (producerName == null || producerName.trim().isEmpty()) {
-            throw new IllegalArgumentException("Producer name cannot be null or empty");
+            throw new IllegalArgumentException("Producer name cannot be null or empty.");
         }
         if (taskQueue == null) {
-            throw new IllegalArgumentException("Task queue cannot be null");
+            throw new IllegalArgumentException("Task queue cannot be null.");
+        }
+        if (taskStatuses == null) {
+            throw new IllegalArgumentException("Task statuses map cannot be null.");
         }
         if (numberOfTasksToGenerate <= 0) {
-            throw new IllegalArgumentException("Number of tasks to generate must be a positive integer");
+            throw new IllegalArgumentException("Number of tasks to generate must be positive.");
         }
-        if (generationIntervalMillis <= 0) {
-            throw new IllegalArgumentException("Generation interval must be a positive integer");
+        if (generationIntervalMillis < 0) {
+            throw new IllegalArgumentException("Generation interval cannot be negative.");
         }
 
         this.producerName = producerName;
@@ -40,14 +46,13 @@ public class TaskProducer implements Runnable {
         this.taskStatuses = taskStatuses;
         this.numberOfTasksToGenerate = numberOfTasksToGenerate;
         this.generationIntervalMillis = generationIntervalMillis;
-
-        logger.config(String.format("Producer '%s' initiliazed. Will generate %d tasks every %d milliseconds.",
+        logger.config(String.format("Producer '%s' initialized. Will generate %d tasks every %d ms.",
                 producerName, numberOfTasksToGenerate, generationIntervalMillis));
     }
 
     @Override
     public void run() {
-        logger.info(String.format("Producer '%s' started.", producerName));
+        logger.info(String.format("Producer '%s' started generating tasks.", producerName));
         try {
             for (int i = 0; i < numberOfTasksToGenerate; i++) {
                 int priority;
@@ -64,17 +69,23 @@ public class TaskProducer implements Runnable {
                     taskName = "MIX_Task_" + (i + 1);
                 }
 
-                String payload = "Payload for " + taskName + "from " + producerName;
+                String payload = "Payload for " + taskName + " from " + producerName;
                 Task task = new Task(taskName, priority, payload);
 
                 taskQueue.put(task);
-                taskStatuses.put(task.getId(), TaskStatus.SUBMITTED);
-                logger.info(String.format("Producer '%s' generated task: %s with priority %d", producerName, taskName, priority));
+                taskStatuses.put(task.getId(), new TaskStatusEntry(task.getId(), TaskStatus.SUBMITTED));
+                logger.log(Level.INFO, String.format("Producer '%s' submitted task: %s. Status: %s. Queue size: %d",
+                        producerName, task.toString(), TaskStatus.SUBMITTED, taskQueue.size()));
+
                 Thread.sleep(generationIntervalMillis);
             }
         } catch (InterruptedException e) {
-            logger.log(Level.WARNING, String.format("Producer '%s' interrupted while generating tasks.", producerName), e);
+            logger.log(Level.WARNING, String.format("Producer '%s' was interrupted while generating tasks.", producerName), e);
+            Thread.currentThread().interrupt();
+        } catch (Exception e) {
+            logger.log(Level.SEVERE, String.format("An unexpected error occurred in Producer '%s'.", producerName), e);
         }
-        logger.info(String.format("Producer '%s' finished generating tasks.", producerName));
+        logger.info(String.format("Producer '%s' finished generating %d tasks.", producerName, numberOfTasksToGenerate));
     }
 }
+

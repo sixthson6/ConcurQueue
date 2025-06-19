@@ -1,22 +1,22 @@
 package com.tech;
 
 import com.tech.model.Task;
-import com.tech.model.TaskStatus;
+import com.tech.model.TaskStatusEntry;
+import com.tech.monitor.SystemMonitor;
 import com.tech.producer.TaskProducer;
 import com.tech.util.LoggerSetup;
 import com.tech.worker.TaskWorker;
 
 import java.util.UUID;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.PriorityBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-
-import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.PriorityBlockingQueue;
-import java.util.concurrent.TimeUnit;
 
 public class ConcurQueueApp {
 
@@ -34,7 +34,7 @@ public class ConcurQueueApp {
         BlockingQueue<Task> taskQueue = new PriorityBlockingQueue<>();
         logger.info("Shared Task Queue (PriorityBlockingQueue) initialized.");
 
-        ConcurrentHashMap<UUID, TaskStatus> taskStatuses = new ConcurrentHashMap<>();
+        ConcurrentHashMap<UUID, TaskStatusEntry> taskStatuses = new ConcurrentHashMap<>();
         logger.info("Task Status Tracker (ConcurrentHashMap) initialized.");
 
         AtomicInteger tasksProcessedCount = new AtomicInteger(0);
@@ -61,11 +61,18 @@ public class ConcurQueueApp {
         System.out.println("______________________________________________________________________________");
 
         logger.info(String.format("Setting up Worker Pool with %d threads...", NUMBER_OF_WORKERS));
-        ExecutorService workerPool = Executors.newFixedThreadPool(NUMBER_OF_WORKERS);
+        ThreadPoolExecutor workerPool = (ThreadPoolExecutor) Executors.newFixedThreadPool(NUMBER_OF_WORKERS);
         for (int i = 0; i < NUMBER_OF_WORKERS; i++) {
             workerPool.submit(new TaskWorker(taskQueue, taskStatuses, tasksProcessedCount));
         }
         logger.info("Worker pool threads submitted.");
+        System.out.println("______________________________________________________________________________");
+
+        SystemMonitor monitor = new SystemMonitor(taskQueue, taskStatuses, workerPool);
+        Thread monitorThread = new Thread(monitor, "SystemMonitorThread");
+        monitorThread.setDaemon(true);
+        monitorThread.start();
+        logger.info("System Monitor started.");
         System.out.println("______________________________________________________________________________");
 
         for (int i = 0; i < NUMBER_OF_PRODUCERS; i++) {
@@ -80,45 +87,57 @@ public class ConcurQueueApp {
         logger.info("All producer threads have completed their task generation.");
         System.out.println("______________________________________________________________________________");
 
-        logger.info("Submitting poison pills to worker queue to signal graceful shutdown.");
-        for (int i = 0; i < NUMBER_OF_WORKERS; i++) {
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            logger.info("Shutdown hook activated. Initiating graceful shutdown sequence...");
+            monitor.stopMonitor();
             try {
-                taskQueue.put(Task.createPoisonPill());
+                monitorThread.join(2000);
             } catch (InterruptedException e) {
-                logger.log(Level.WARNING, "Main thread interrupted while submitting poison pill.", e);
                 Thread.currentThread().interrupt();
             }
-        }
-        System.out.println("______________________________________________________________________________");
 
-        logger.info("All tasks and poison pills submitted. Final task status summary:");
-        taskStatuses.forEach((uuid, status) ->
-                logger.info(String.format("Task ID: %s, Status: %s", uuid.toString().substring(0, 8), status)));
-        logger.info(String.format("Total tasks processed count (from AtomicInteger): %d. Total tasks submitted: %d.",
-                tasksProcessedCount.get(), (NUMBER_OF_PRODUCERS * TASKS_PER_PRODUCER)));
-        System.out.println("______________________________________________________________________________");
-
-
-        logger.info("Shutting down worker pool...");
-        workerPool.shutdown();
-        try {
-            if (!workerPool.awaitTermination(60, TimeUnit.SECONDS)) {
-                logger.warning("Worker pool did not terminate gracefully within the specified timeout. Forcing shutdown.");
-                workerPool.shutdownNow();
-                if (!workerPool.awaitTermination(30, TimeUnit.SECONDS)) {
-                    logger.severe("Worker pool did not terminate after forced shutdown.");
+            logger.info("Shutdown hook: Submitting poison pills to worker queue.");
+            for (int i = 0; i < NUMBER_OF_WORKERS; i++) {
+                try {
+                    taskQueue.put(Task.POISON_PILL);
+                } catch (InterruptedException e) {
+                    logger.log(Level.WARNING, "Shutdown hook interrupted while submitting poison pill.", e);
+                    Thread.currentThread().interrupt();
                 }
-            } else {
-                logger.info("Worker Pool terminated successfully.");
             }
+
+            try {
+                logger.info("Shutdown hook: Waiting for tasks to complete and workers to shut down...");
+                workerPool.shutdown();
+                if (!workerPool.awaitTermination(60, TimeUnit.SECONDS)) {
+                    logger.warning("Shutdown hook: Worker Pool did not terminate gracefully. Forcing shutdown.");
+                    workerPool.shutdownNow();
+                    if (!workerPool.awaitTermination(30, TimeUnit.SECONDS)) {
+                        logger.severe("Shutdown hook: Worker Pool did not terminate after forced shutdown.");
+                    }
+                } else {
+                    logger.info("Shutdown hook: Worker Pool terminated successfully.");
+                }
+            } catch (InterruptedException e) {
+                logger.log(Level.WARNING, "Shutdown hook interrupted while waiting for worker pool termination.", e);
+                workerPool.shutdownNow();
+                Thread.currentThread().interrupt();
+            }
+
+            logger.info("Shutdown hook: All resources released. Application terminated.");
+            System.out.println("______________________________________________________________________________");
+        }, "ShutdownHookThread"));
+
+
+        logger.info("Main thread waiting for JVM shutdown signal. Press Ctrl+C to terminate.");
+        try {
+            Thread.currentThread().join();
         } catch (InterruptedException e) {
-            logger.log(Level.WARNING, "Interruption during worker pool shutdown.", e);
-            workerPool.shutdownNow();
+            logger.log(Level.INFO, "Main thread interrupted. Exiting.");
             Thread.currentThread().interrupt();
         }
-        System.out.println("______________________________________________________________________________");
 
-        logger.info("ConcurQueue Application finished.");
+        logger.info("ConcurQueue App has finished execution (main thread path).");
         System.out.println("______________________________________________________________________________");
     }
 }
