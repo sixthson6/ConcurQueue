@@ -1,11 +1,15 @@
 package com.tech;
 
+import com.tech.deadlock.DeadlockRunnableA;
+import com.tech.deadlock.DeadlockRunnableB;
+import com.tech.deadlock.ResourceLock;
 import com.tech.model.Task;
 import com.tech.model.TaskStatusEntry;
 import com.tech.monitor.SystemMonitor;
 import com.tech.producer.TaskProducer;
 import com.tech.util.LoggerSetup;
 import com.tech.worker.TaskWorker;
+
 
 import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
@@ -25,14 +29,19 @@ public class ConcurQueueApp {
     private static final int TASKS_PER_PRODUCER = 10;
     private static final long PRODUCER_INTERVAL_MS = 1500;
     private static final int NUMBER_OF_WORKERS = 4;
+    private static final int QUEUE_CAPACITY = 10;
+
+    private static final ResourceLock LOCK_A = new ResourceLock("LockA");
+    private static final ResourceLock LOCK_B = new ResourceLock("LockB");
+
 
     public static void main(String[] args) {
         LoggerSetup.setup();
         logger.info("ConcurQueue Application starting...");
         System.out.println("______________________________________________________________________________");
 
-        BlockingQueue<Task> taskQueue = new PriorityBlockingQueue<>();
-        logger.info("Shared Task Queue (PriorityBlockingQueue) initialized.");
+        BlockingQueue<Task> taskQueue = new PriorityBlockingQueue<>(QUEUE_CAPACITY);
+        logger.info(String.format("Shared Task Queue (PriorityBlockingQueue) initialized with capacity %d.", QUEUE_CAPACITY));
 
         ConcurrentHashMap<UUID, TaskStatusEntry> taskStatuses = new ConcurrentHashMap<>();
         logger.info("Task Status Tracker (ConcurrentHashMap) initialized.");
@@ -75,6 +84,15 @@ public class ConcurQueueApp {
         logger.info("System Monitor started.");
         System.out.println("______________________________________________________________________________");
 
+        logger.info("Starting Deadlock Demonstration Threads...");
+        Thread deadlockThread1 = new Thread(new DeadlockRunnableA(LOCK_A, LOCK_B), "Deadlock-Thread-A");
+        Thread deadlockThread2 = new Thread(new DeadlockRunnableB(LOCK_A, LOCK_B), "Deadlock-Thread-B");
+
+        deadlockThread1.start();
+        deadlockThread2.start();
+        logger.info("Deadlock demonstration threads started. Observe console for deadlock logs.");
+        System.out.println("______________________________________________________________________________");
+
         for (int i = 0; i < NUMBER_OF_PRODUCERS; i++) {
             try {
                 producerThreads[i].join();
@@ -95,6 +113,22 @@ public class ConcurQueueApp {
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }
+
+            if (deadlockThread1.isAlive()) {
+                logger.info("Shutdown hook: Interrupting Deadlock-Thread-A.");
+                deadlockThread1.interrupt();
+            }
+            if (deadlockThread2.isAlive()) {
+                logger.info("Shutdown hook: Interrupting Deadlock-Thread-B.");
+                deadlockThread2.interrupt();
+            }
+            try {
+                deadlockThread1.join(2000);
+                deadlockThread2.join(2000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+
 
             logger.info("Shutdown hook: Submitting poison pills to worker queue.");
             for (int i = 0; i < NUMBER_OF_WORKERS; i++) {
@@ -129,7 +163,7 @@ public class ConcurQueueApp {
         }, "ShutdownHookThread"));
 
 
-        logger.info("Main thread waiting for JVM shutdown signal. Press Ctrl+C to terminate.");
+        logger.info("Main thread waiting for JVM shutdown signal. Press Ctrl+C to terminate and observe deadlock if it occurs.");
         try {
             Thread.currentThread().join();
         } catch (InterruptedException e) {
@@ -141,3 +175,4 @@ public class ConcurQueueApp {
         System.out.println("______________________________________________________________________________");
     }
 }
+
