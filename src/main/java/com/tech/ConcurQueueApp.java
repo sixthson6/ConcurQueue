@@ -305,23 +305,34 @@ public class ConcurQueueApp {
         ConsoleUtils.printHeader("MEMORY USAGE ANALYSIS");
 
         Runtime runtime = Runtime.getRuntime();
-        long maxMemory = runtime.maxMemory();
-        long totalMemory = runtime.totalMemory();
-        long freeMemory = runtime.freeMemory();
-        long usedMemory = totalMemory - freeMemory;
+        long max = runtime.maxMemory();
+        long total = runtime.totalMemory();
+        long free = runtime.freeMemory();
+        long used = total - free;
+        double usagePercent = (used * 100.0) / total;
 
-        System.out.println("Current Memory Statistics:");
-        System.out.printf("Max Memory:    %,d bytes (%.2f MB)%n", maxMemory, maxMemory / 1024.0 / 1024.0);
-        System.out.printf("Total Memory:  %,d bytes (%.2f MB)%n", totalMemory, totalMemory / 1024.0 / 1024.0);
-        System.out.printf("Used Memory:   %,d bytes (%.2f MB)%n", usedMemory, usedMemory / 1024.0 / 1024.0);
-        System.out.printf("Free Memory:   %,d bytes (%.2f MB)%n", freeMemory, freeMemory / 1024.0 / 1024.0);
-        System.out.printf("Memory Usage: %.2f%%%n", (usedMemory * 100.0) / totalMemory);
+        System.out.printf("Memory Statistics:%n");
+        System.out.printf("├─ Max:    %,d bytes (%.1f MB)%n", max, max / 1024.0 / 1024.0);
+        System.out.printf("├─ Total:  %,d bytes (%.1f MB)%n", total, total / 1024.0 / 1024.0);
+        System.out.printf("├─ Used:   %,d bytes (%.1f MB)%n", used, used / 1024.0 / 1024.0);
+        System.out.printf("├─ Free:   %,d bytes (%.1f MB)%n", free, free / 1024.0 / 1024.0);
+        System.out.printf("└─ Usage:  %.1f%%%n%n", usagePercent);
 
-        System.out.println("\nRecommendations:");
-        if (usedMemory > totalMemory * 0.8) {
-            System.out.println("⚠️  High memory usage detected. Consider increasing heap size.");
+        System.gc();
+        long newFree = runtime.freeMemory();
+        long freed = newFree - free;
+
+        if (freed > 0) {
+            System.out.printf("GC freed: %,d bytes (%.1f MB)%n", freed, freed / 1024.0 / 1024.0);
+        }
+
+        System.out.println("Recommendations:");
+        if (usagePercent > 80) {
+            System.out.println("⚠️  High memory usage - consider increasing heap size");
+        } else if (usagePercent < 20) {
+            System.out.println("💡 Low memory usage - heap size could be reduced");
         } else {
-            System.out.println("✅ Memory usage is within acceptable limits.");
+            System.out.println("✅ Memory usage is optimal");
         }
 
         ConsoleUtils.waitForUser("Press Enter to continue...");
