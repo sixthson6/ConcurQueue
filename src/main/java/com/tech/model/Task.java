@@ -47,7 +47,17 @@ public class Task implements Comparable<Task> {
     }
 
     public Task(Task originalTask, int newRetryAttempt) {
-        this(originalTask.getName(), originalTask.getPriority(), originalTask.getPayload(), newRetryAttempt);
+        if (originalTask == null) {
+            throw new IllegalArgumentException("Original task cannot be null for retry.");
+        }
+        this.id = originalTask.getId();
+        this.name = originalTask.getName();
+        this.priority = originalTask.getPriority();
+        this.createdTimestamp = originalTask.getCreatedTimestamp();
+        this.payload = originalTask.getPayload();
+        this.retryAttempt = newRetryAttempt;
+
+        logger.fine("Task retried: " + this);
     }
 
     public UUID getId() {
@@ -111,7 +121,7 @@ public class Task implements Comparable<Task> {
                 "id=" + id.toString().substring(0, 8) +
                 ", name='" + name + '\'' +
                 ", priority=" + priority +
-                ", created=" + createdTimestamp +
+                ", created=" + createdTimestamp.toString().substring(11, 23) +
                 ", retries=" + retryAttempt +
                 '}';
     }

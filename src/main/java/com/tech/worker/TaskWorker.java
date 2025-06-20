@@ -45,13 +45,18 @@ public class TaskWorker implements Runnable {
     @Override
     public void run() {
         String workerName = Thread.currentThread().getName();
-        logger.info(String.format("Worker '%s' started.", workerName));
+        logger.info(String.format("Worker '%s' started and ready to process tasks.", workerName));
 
         while (running) {
             Task task = null;
             TaskStatusEntry statusEntry = null;
             try {
+                logger.fine(String.format("Worker '%s' waiting for task from queue (queue size: %d)",
+                        workerName, taskQueue.size()));
+
                 task = taskQueue.take();
+
+                logger.fine(String.format("Worker '%s' took task from queue: %s", workerName, task.toString()));
 
                 if (task == Task.POISON_PILL) {
                     logger.info(String.format("Worker '%s' received poison pill. Shutting down gracefully.", workerName));
@@ -70,41 +75,20 @@ public class TaskWorker implements Runnable {
 
                 statusEntry.setProcessingStartTime(Instant.now());
 
-                logger.log(Level.INFO, String.format("Worker '%s' started processing task: %s (Retry: %d). Status: %s. Queue size: %d",
+                logger.info(String.format("Worker '%s' started processing task: %s (Retry: %d). Status: %s. Queue size: %d",
                         workerName, task.toString(), task.getRetryAttempt(), statusEntry.getStatus(), taskQueue.size()));
 
-                long processingDelay = 500L;
-                if (task.getPriority() <= 2) {
-                    processingDelay = 200L + (long) (Math.random() * 200);
-                } else if (task.getPriority() >= 4) {
-                    processingDelay = 600L + (long) (Math.random() * 400);
-                } else {
-                    processingDelay = 400L + (long) (Math.random() * 200);
-                }
-
+                long processingDelay = calculateProcessingDelay(task.getPriority());
                 Thread.sleep(processingDelay);
 
                 statusEntry.setProcessingEndTime(Instant.now());
 
-                if (random.nextDouble() < 0.15 && task.getRetryAttempt() < MAX_RETRIES) {
-                    statusEntry.incrementRetryAttempts();
-                    statusEntry.updateStatus(TaskStatus.FAILED_RETRY);
-                    Task retryTask = new Task(task, task.getRetryAttempt() + 1);
-                    taskQueue.put(retryTask);
-                    logger.warning(String.format("Worker '%s' failed task: %s. Re-queueing for retry %d.",
-                            workerName, task.toString(), retryTask.getRetryAttempt()));
+                if (shouldTaskFail() && task.getRetryAttempt() < MAX_RETRIES) {
+                    handleTaskFailure(task, statusEntry, workerName);
                 } else {
-                    if (task.getRetryAttempt() >= MAX_RETRIES && statusEntry.getStatus() == TaskStatus.FAILED_RETRY) {
-                        statusEntry.updateStatus(TaskStatus.FAILED_PERMANENTLY);
-                        logger.severe(String.format("Worker '%s' completed/failed task: %s permanently after %d retries.",
-                                workerName, task.toString(), task.getRetryAttempt()));
-                    } else {
-                        statusEntry.updateStatus(TaskStatus.COMPLETED);
-                        tasksProcessedCount.incrementAndGet();
-                        logger.log(Level.INFO, String.format("Worker '%s' completed task: %s (Processed in %d ms). Total processed: %d",
-                                workerName, task.toString(), processingDelay, tasksProcessedCount.get()));
-                    }
+                    handleTaskSuccess(task, statusEntry, workerName, processingDelay);
                 }
+
             } catch (InterruptedException e) {
                 logger.log(Level.WARNING, String.format("TaskWorker '%s' was interrupted. Attempting graceful shutdown.", workerName), e);
                 Thread.currentThread().interrupt();
@@ -112,18 +96,65 @@ public class TaskWorker implements Runnable {
             } catch (Exception e) {
                 logger.log(Level.SEVERE, String.format("An unexpected error occurred in TaskWorker '%s' processing task: %s",
                         workerName, (task != null ? task.toString() : "N/A")), e);
-                if (task != null) {
-                    statusEntry = taskStatuses.get(task.getId());
-                    if (statusEntry != null) {
-                        statusEntry.setProcessingEndTime(Instant.now());
-                        statusEntry.updateStatus(TaskStatus.FAILED_PERMANENTLY);
-                    } else {
-                        taskStatuses.put(task.getId(), new TaskStatusEntry(task.getId(), TaskStatus.FAILED_PERMANENTLY, task.getRetryAttempt()));
-                    }
-                }
+                handleTaskError(task, statusEntry);
             }
         }
-        logger.info(String.format("TaskWorker '%s' stopped.", workerName));
+        logger.info(String.format("TaskWorker '%s' stopped. Final processed count: %d", workerName, tasksProcessedCount.get()));
+    }
+
+    private long calculateProcessingDelay(int priority) {
+        if (priority <= 2) {
+            return 200L + (long) (Math.random() * 200);
+        } else if (priority >= 4) {
+            return 600L + (long) (Math.random() * 400);
+        } else {
+            return 400L + (long) (Math.random() * 200);
+        }
+    }
+
+    private boolean shouldTaskFail() {
+        return random.nextDouble() < 0.35;
+    }
+
+    private void handleTaskFailure(Task task, TaskStatusEntry statusEntry, String workerName) {
+        try {
+            statusEntry.incrementRetryAttempts();
+            statusEntry.updateStatus(TaskStatus.FAILED_RETRY);
+            Task retryTask = new Task(task, task.getRetryAttempt() + 1);
+            taskQueue.put(retryTask);
+            taskStatuses.put(retryTask.getId(), new TaskStatusEntry(retryTask.getId(), TaskStatus.SUBMITTED, retryTask.getRetryAttempt()));
+
+            logger.warning(String.format("Worker '%s' failed task: %s. Re-queueing for retry %d (queue size: %d).",
+                    workerName, task.toString(), retryTask.getRetryAttempt(), taskQueue.size()));
+        } catch (InterruptedException e) {
+            logger.log(Level.SEVERE, "Failed to requeue task for retry", e);
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private void handleTaskSuccess(Task task, TaskStatusEntry statusEntry, String workerName, long processingDelay) {
+        if (task.getRetryAttempt() >= MAX_RETRIES && statusEntry.getRetryAttempts() > 0) {
+            // Task that failed multiple times but now succeeded on final attempt
+            statusEntry.updateStatus(TaskStatus.FAILED_PERMANENTLY);
+            logger.severe(String.format("Worker '%s' marked task as permanently failed: %s after %d retries.",
+                    workerName, task.toString(), task.getRetryAttempt()));
+        } else {
+            statusEntry.updateStatus(TaskStatus.COMPLETED);
+            int currentCount = tasksProcessedCount.incrementAndGet();
+            logger.info(String.format("Worker '%s' completed task: %s (Processed in %d ms). Total processed: %d",
+                    workerName, task.toString(), processingDelay, currentCount));
+        }
+    }
+
+    private void handleTaskError(Task task, TaskStatusEntry statusEntry) {
+        if (task != null) {
+            if (statusEntry != null) {
+                statusEntry.setProcessingEndTime(Instant.now());
+                statusEntry.updateStatus(TaskStatus.FAILED_PERMANENTLY);
+            } else {
+                taskStatuses.put(task.getId(), new TaskStatusEntry(task.getId(), TaskStatus.FAILED_PERMANENTLY, task.getRetryAttempt()));
+            }
+        }
     }
 
     public void stopWorker() {

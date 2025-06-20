@@ -52,40 +52,47 @@ public class TaskProducer implements Runnable {
 
     @Override
     public void run() {
-        logger.info(String.format("Producer '%s' started generating tasks.", producerName));
+        logger.info(String.format("Producer '%s' started generating %d tasks", producerName, numberOfTasksToGenerate));
+
+        boolean isHighPriority = producerName.contains("HighPriority");
+        boolean isLowPriority = producerName.contains("LowPriority");
+        String taskPrefix = isHighPriority ? "HP_Task_" : isLowPriority ? "LP_Task_" : "MIX_Task_";
+
         try {
             for (int i = 0; i < numberOfTasksToGenerate; i++) {
                 int priority;
-                String taskName;
-
-                if (producerName.contains("HighPriority")) {
+                if (isHighPriority) {
                     priority = random.nextInt(3) + 1;
-                    taskName = "HP_Task_" + (i + 1);
-                } else if (producerName.contains("LowPriority")) {
+                } else if (isLowPriority) {
                     priority = random.nextInt(3) + 3;
-                    taskName = "LP_Task_" + (i + 1);
                 } else {
                     priority = random.nextInt(5) + 1;
-                    taskName = "MIX_Task_" + (i + 1);
                 }
 
+                String taskName = taskPrefix + (i + 1);
                 String payload = "Payload for " + taskName + " from " + producerName;
                 Task task = new Task(taskName, priority, payload);
 
                 taskQueue.put(task);
                 taskStatuses.put(task.getId(), new TaskStatusEntry(task.getId(), TaskStatus.SUBMITTED));
-                logger.log(Level.INFO, String.format("Producer '%s' submitted task: %s. Status: %s. Queue size: %d",
-                        producerName, task.toString(), TaskStatus.SUBMITTED, taskQueue.size()));
 
-                Thread.sleep(generationIntervalMillis);
+                if (i % 10 == 0 || i == numberOfTasksToGenerate - 1) {
+                    logger.info(String.format("Producer '%s': %d/%d tasks submitted. Queue: %d",
+                            producerName, i + 1, numberOfTasksToGenerate, taskQueue.size()));
+                }
+
+                if (generationIntervalMillis > 0) {
+                    Thread.sleep(generationIntervalMillis);
+                }
             }
         } catch (InterruptedException e) {
-            logger.log(Level.WARNING, String.format("Producer '%s' was interrupted while generating tasks.", producerName), e);
+            logger.warning(String.format("Producer '%s' interrupted", producerName));
             Thread.currentThread().interrupt();
         } catch (Exception e) {
-            logger.log(Level.SEVERE, String.format("An unexpected error occurred in Producer '%s'.", producerName), e);
+            logger.log(Level.SEVERE, String.format("Producer '%s' error", producerName), e);
         }
-        logger.info(String.format("Producer '%s' finished generating %d tasks.", producerName, numberOfTasksToGenerate));
+
+        logger.info(String.format("Producer '%s' completed %d tasks", producerName, numberOfTasksToGenerate));
     }
 }
 

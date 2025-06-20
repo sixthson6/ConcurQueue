@@ -1,5 +1,6 @@
 package com.tech.model;
 
+
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Objects;
@@ -126,4 +127,5 @@ public class TaskStatusEntry {
                 '}';
     }
 }
+
 
