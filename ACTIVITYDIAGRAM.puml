@@ -1,0 +1,74 @@
+@startuml
+title Concurrent Task Dispatch Workflow
+
+skinparam defaultFontSize 20
+skinparam activityFontSize 22
+skinparam activityArrowFontSize 18
+skinparam activityBorderColor #333333
+skinparam activityBackgroundColor #FFFFFF
+skinparam activityStartColor #33CC33
+skinparam activityEndColor #CC3333
+
+start
+
+split
+partition "Producers (com.tech.producer.TaskProducer)" {
+repeat
+:Generate Task (com.tech.model.Task);
+:Add initial TaskStatusEntry to TaskStatuses Map;
+:Put Task into BlockingQueue;
+backward: Task Queue is full?;
+-> No;
+:Log Task Submission;
+repeat while (More tasks to generate?) is (Yes)
+-> No;
+:Producers finished generation;
+}
+split again
+partition "Workers (com.tech.worker.TaskWorker)" {
+repeat
+:Take Task from BlockingQueue;
+backward: Task Queue is empty or Poison Pill received?;
+-> No;
+:Update Task Status to PROCESSING
+(in com.tech.model.TaskStatusEntry in TaskStatuses Map);
+:Simulate Task Processing;
+if (Task Fails Randomly?) then (Yes)
+if (Max Retries Exhausted (MAX_RETRIES)?) then (Yes)
+:Update Task Status to FAILED_PERMANENTLY;
+else (No)
+:Increment Retry Attempts;
+:Update Task Status to FAILED_RETRY;
+:Re-queue Task;
+endif
+else (No)
+:Update Task Status to COMPLETED;
+:Increment TasksProcessedCount;
+endif
+repeat while (Worker running & not Poison Pill) is (Yes)
+-> No;
+:Worker gracefully stops;
+}
+split again
+partition "System Monitor (com.tech.monitor.SystemMonitor)" {
+repeat
+:Sleep for Monitor Interval;
+:Collect System Status
+(Queue size, Worker Pool stats, TaskStatuses counts);
+:Log Task Status Report;
+:Detect Stuck Tasks;
+:Export Task Statuses to JSON file (Periodically);
+repeat while (Monitor running) is (Yes)
+-> No;
+:Monitor gracefully stops;
+}
+split end
+
+:All Producers finished;
+:Send POISON_PILL to Queue for each Worker;
+:Wait for all Workers to terminate;
+:Wait for System Monitor to terminate;
+:Perform global cleanup;
+
+end
+@enduml
