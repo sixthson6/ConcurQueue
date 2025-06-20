@@ -134,7 +134,6 @@ public class TaskWorker implements Runnable {
 
     private void handleTaskSuccess(Task task, TaskStatusEntry statusEntry, String workerName, long processingDelay) {
         if (task.getRetryAttempt() >= MAX_RETRIES && statusEntry.getRetryAttempts() > 0) {
-            // Task that failed multiple times but now succeeded on final attempt
             statusEntry.updateStatus(TaskStatus.FAILED_PERMANENTLY);
             logger.severe(String.format("Worker '%s' marked task as permanently failed: %s after %d retries.",
                     workerName, task.toString(), task.getRetryAttempt()));
