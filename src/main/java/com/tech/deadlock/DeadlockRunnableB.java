@@ -26,7 +26,7 @@ public class DeadlockRunnableB implements Runnable {
         synchronized (resource2) {
             logger.info(String.format("%s: Locked %s. Now attempting to lock %s...", threadName, resource2.getName(), resource1.getName()));
             try {
-                Thread.sleep(100); // Simulate some work or delay to increase chance of deadlock
+                Thread.sleep(100);
             } catch (InterruptedException e) {
                 logger.log(Level.WARNING, String.format("%s: Interrupted while waiting.", threadName), e);
                 Thread.currentThread().interrupt();

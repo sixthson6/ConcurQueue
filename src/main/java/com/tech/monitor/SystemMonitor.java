@@ -87,23 +87,53 @@ public class SystemMonitor implements Runnable {
     private void logSystemStatus() {
         logger.info("--- SYSTEM STATUS REPORT ---");
         logger.info(String.format("Task Queue Size: %d", taskQueue.size()));
-        logger.info(String.format("Worker Pool - Active Threads: %d, Queued Tasks: %d, Completed Tasks: %d, Pool Size: %d",
+        logger.info(String.format("Worker Pool - Active: %d, Queued: %d, Completed: %d, Pool: %d",
                 workerPoolExecutor.getActiveCount(),
                 workerPoolExecutor.getQueue().size(),
                 workerPoolExecutor.getCompletedTaskCount(),
                 workerPoolExecutor.getPoolSize()));
 
-        long submitted = taskStatuses.values().stream().filter(s -> s.getStatus() == TaskStatus.SUBMITTED).count();
-        long processing = taskStatuses.values().stream().filter(s -> s.getStatus() == TaskStatus.PROCESSING).count();
-        long completed = taskStatuses.values().stream().filter(s -> s.getStatus() == TaskStatus.COMPLETED).count();
-        long failedRetry = taskStatuses.values().stream().filter(s -> s.getStatus() == TaskStatus.FAILED_RETRY).count();
-        long failedPerm = taskStatuses.values().stream().filter(s -> s.getStatus() == TaskStatus.FAILED_PERMANENTLY).count();
-        long totalTracked = taskStatuses.size();
+        long[] statusCounts = new long[5];
+        long totalProcessingTimeMillis = 0;
+        long completedWithDuration = 0;
 
-        logger.info(String.format("Task Status Summary: Submitted=%d, Processing=%d, Completed=%d, Failed (Retry)=%d, Failed (Permanent)=%d, Total Tracked=%d",
-                submitted, processing, completed, failedRetry, failedPerm, totalTracked));
+        for (TaskStatusEntry entry : taskStatuses.values()) {
+            switch (entry.getStatus()) {
+                case SUBMITTED:
+                    statusCounts[0]++;
+                    break;
+                case PROCESSING:
+                    statusCounts[1]++;
+                    break;
+                case COMPLETED:
+                    statusCounts[2]++;
+                    if (entry.getProcessingDuration() != null) {
+                        totalProcessingTimeMillis += entry.getProcessingDuration().toMillis();
+                        completedWithDuration++;
+                    }
+                    break;
+                case FAILED_RETRY:
+                    statusCounts[3]++;
+                    break;
+                case FAILED_PERMANENTLY:
+                    statusCounts[4]++;
+                    break;
+            }
+        }
 
-        calculateAndLogPerformanceMetrics(completed);
+        logger.info(String.format("Task Status: Submitted=%d, Processing=%d, Completed=%d, Failed(Retry)=%d, Failed(Perm)=%d, Total=%d",
+                statusCounts[0], statusCounts[1], statusCounts[2], statusCounts[3], statusCounts[4], taskStatuses.size()));
+
+        // Calculate performance metrics
+        double avgProcessingTimeMillis = completedWithDuration > 0 ?
+                (double) totalProcessingTimeMillis / completedWithDuration : 0;
+
+        Duration uptime = Duration.between(applicationStartTime, Instant.now());
+        double throughput = uptime.toMillis() > 0 ?
+                (double) statusCounts[2] / (uptime.toMillis() / 1000.0) : 0;
+
+        logger.info(String.format("Performance: Avg Proc=%.2fms, Throughput=%.2f tasks/sec",
+                avgProcessingTimeMillis, throughput));
         logger.info("----------------------------");
     }
 
@@ -146,46 +176,45 @@ public class SystemMonitor implements Runnable {
     }
 
     private void exportTaskStatusesToJsonFile() {
-        if (!running) {
-            return;
-        }
+        if (!running) return;
 
         logger.info("Exporting task statuses to " + JSON_OUTPUT_FILE);
-        try (FileWriter writer = new FileWriter(JSON_OUTPUT_FILE)) {
-            writer.write("[\n");
+        StringBuilder json = new StringBuilder();
+        json.append("[\n");
 
-            boolean firstEntry = true;
-            for (Map.Entry<UUID, TaskStatusEntry> entry : taskStatuses.entrySet()) {
-                if (!firstEntry) {
-                    writer.write(",\n");
-                }
-                writer.write("  {\n");
-                writer.write(String.format("    \"taskId\": \"%s\",\n", entry.getKey()));
-                writer.write(String.format("    \"status\": \"%s\",\n", entry.getValue().getStatus()));
-                writer.write(String.format("    \"lastUpdatedTimestamp\": \"%s\",\n", entry.getValue().getLastUpdatedTimestamp()));
-                writer.write(String.format("    \"retryAttempts\": %d", entry.getValue().getRetryAttempts()));
+        boolean first = true;
+        for (Map.Entry<UUID, TaskStatusEntry> entry : taskStatuses.entrySet()) {
+            if (!first) json.append(",\n");
 
-                if (entry.getValue().getProcessingStartTime() != null) {
-                    writer.write(String.format(",\n    \"processingStartTime\": \"%s\"", entry.getValue().getProcessingStartTime()));
-                }
-                if (entry.getValue().getProcessingEndTime() != null) {
-                    writer.write(String.format(",\n    \"processingEndTime\": \"%s\"", entry.getValue().getProcessingEndTime()));
-                }
-                if (entry.getValue().getProcessingDuration() != null) {
-                    writer.write(String.format(",\n    \"processingDurationMillis\": %d", entry.getValue().getProcessingDuration().toMillis()));
-                }
+            TaskStatusEntry status = entry.getValue();
+            json.append("  {\n")
+                    .append(String.format("    \"taskId\": \"%s\",\n", entry.getKey()))
+                    .append(String.format("    \"status\": \"%s\",\n", status.getStatus()))
+                    .append(String.format("    \"lastUpdated\": \"%s\",\n", status.getLastUpdatedTimestamp()))
+                    .append(String.format("    \"retries\": %d", status.getRetryAttempts()));
 
-                writer.write("\n  }");
-                firstEntry = false;
+            if (status.getProcessingStartTime() != null) {
+                json.append(String.format(",\n    \"startTime\": \"%s\"", status.getProcessingStartTime()));
+            }
+            if (status.getProcessingEndTime() != null) {
+                json.append(String.format(",\n    \"endTime\": \"%s\"", status.getProcessingEndTime()));
+            }
+            if (status.getProcessingDuration() != null) {
+                json.append(String.format(",\n    \"durationMs\": %d", status.getProcessingDuration().toMillis()));
             }
 
-            writer.write("\n]\n");
-            logger.info("Task statuses successfully exported to " + JSON_OUTPUT_FILE);
+            json.append("\n  }");
+            first = false;
+        }
+        json.append("\n]\n");
+
+        try (FileWriter writer = new FileWriter(JSON_OUTPUT_FILE)) {
+            writer.write(json.toString());
+            logger.info("Task statuses exported successfully");
         } catch (IOException e) {
-            logger.log(Level.SEVERE, "Failed to export task statuses to JSON file!", e);
+            logger.log(Level.SEVERE, "JSON export failed", e);
         }
     }
-
 
     public void stopMonitor() {
         this.running = false;
