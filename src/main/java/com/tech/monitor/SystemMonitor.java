@@ -124,7 +124,6 @@ public class SystemMonitor implements Runnable {
         logger.info(String.format("Task Status: Submitted=%d, Processing=%d, Completed=%d, Failed(Retry)=%d, Failed(Perm)=%d, Total=%d",
                 statusCounts[0], statusCounts[1], statusCounts[2], statusCounts[3], statusCounts[4], taskStatuses.size()));
 
-        // Calculate performance metrics
         double avgProcessingTimeMillis = completedWithDuration > 0 ?
                 (double) totalProcessingTimeMillis / completedWithDuration : 0;
 
